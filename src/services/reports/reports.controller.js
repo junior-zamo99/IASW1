@@ -129,7 +129,7 @@ const entregarNivelDeIngles = async (req, res) => {
       },
       {
         role: "user",
-        content: `Evaluate the following test answers and provide the results in this format if all questions are answered correctly then the level is C2, the other ones you have to determine the recommendations for each question must be in spanish: 
+        content: `Evaluate the following test answers and provide the results in this format if all questions are answered correctly then the level is C2, the other ones you have to determine the recommendations for each question must be in spanish the answer must be in Json and nothing else: 
         {
           "nivel": "A1, A2, B1 .... C2",
           "recomendaciones": [
@@ -153,19 +153,25 @@ const entregarNivelDeIngles = async (req, res) => {
       max_tokens: 1000,
     });
 
+    
+// 4. Procesar y validar la respuesta de OpenAI
+let result;
+try {
+  // Limpia la respuesta eliminando bloques de código (```json y ```)
+  const rawContent = completion.choices[0].message.content;
+  const cleanedContent = rawContent.replace(/```(?:json)?|```/g, "").trim();
 
-    // 4. Procesar y validar la respuesta de OpenAI
-    let result;
-    try {
-      result = JSON.parse(completion.choices[0].message.content);
-    } catch (parseError) {
-      console.error("Error al parsear la respuesta de OpenAI:", parseError.message);
-      return res.status(500).json({
-        success: false,
-        message: "La respuesta de OpenAI no se pudo parsear correctamente.",
-        error: parseError.message,
-      });
-    }
+  // Intenta parsear el JSON limpio
+  result = JSON.parse(cleanedContent);
+} catch (parseError) {
+  console.error("Error al parsear la respuesta de OpenAI:", parseError.message);
+  return res.status(500).json({
+    success: false,
+    message: "La respuesta de OpenAI no se pudo parsear correctamente.",
+    error: parseError.message,
+  });
+}
+
 
     // Validar que la respuesta contiene las claves esperadas
     if (!result.nivel || !Array.isArray(result.recomendaciones)) {
@@ -178,6 +184,10 @@ const entregarNivelDeIngles = async (req, res) => {
 
     //aqui se puede hacer un post a la base de datos para guardar el resultado para marcar todos los niveles anteriores
     const nivel = result.nivel;
+    console.log(nivel)
+    
+
+
 
     // 5. Devolver el resultado procesado al cliente
     return res.status(200).json({
