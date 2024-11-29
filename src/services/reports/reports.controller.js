@@ -2,15 +2,16 @@ import axios from "axios";
 import OpenAI from "openai";
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: ""
 });
 
 const obtenerResultados = async (req, res) => {
+
   try {
     // 1. Obtener lista de lecciones
-    const response = await axios.get('http://127.0.0.1:8000/api/leccion');
+    const response = await axios.get('http://18.191.150.96/api/leccion');
     const listaLecciones = obtenerNombresLecciones(response.data);
-
+    
     // Verificar si hay datos en la respuesta
     if (!listaLecciones.length) {
       return res.status(404).json({
@@ -101,11 +102,14 @@ const obtenerResultados = async (req, res) => {
 
 const entregarNivelDeIngles = async (req, res) => {
   try {
-    // 1. Obtener las respuestas del examen desde el cuerpo de la solicitud
-    const { questions } = req.body;
+    console.log("Cuerpo recibido:", req.body);
 
+    // Extraer preguntas del cuerpo
+    const { questions } = req.body;
+    console.log("Questions recibido:", questions);
     // Validar la estructura de entrada
     if (!questions || !Array.isArray(questions)) {
+      
       return res.status(400).json({
         success: false,
         message: "Formato incorrecto: se esperaba un array de preguntas",
@@ -220,11 +224,356 @@ try {
   }
 };
 
+
+const generarRetroalimentacion = async (req, res) => {
+  try {
+    // 1. Obtener lista de lecciones desde la API
+    const response = await axios.get('http://18.191.150.96/api/leccion');
+    const listaLecciones = obtenerNombresLecciones(response.data);
+
+    // Verificar si hay datos en la respuesta
+    if (!listaLecciones.length) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontraron lecciones"
+      });
+    }
+
+    // 2. Generar retroalimentación con OpenAI
+    const messages = [
+      {
+        role: "system",
+        content: "Eres un asistente que genera retroalimentación educativa. Proporciona retroalimentación sobre cada tema en un formato JSON válido, incluyendo ejemplos prácticos para cada tema."
+      },
+      {
+        role: "user",
+        content: `Genera retroalimentación para los siguientes temas: ${listaLecciones.join(", ")}. La respuesta debe seguir este formato JSON válido:
+        {
+          "feedback": [
+            {
+              "topic": "Nombre del tema",
+              "details": "Explicación o retroalimentación sobre el tema.",
+              "examples": [
+                "Ejemplo práctico 1",
+                "Ejemplo práctico 2"
+              ]
+            },
+            ...
+          ]
+        }`
+      }
+    ];
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages,
+      temperature: 0.7,
+      max_tokens: 2000,
+    });
+
+    // 3. Procesar la respuesta
+    let feedbackResult;
+    try {
+      const rawContent = completion.choices[0].message.content;
+      const cleanedContent = rawContent.replace(/```(?:json)?|```/g, "").trim();
+      feedbackResult = JSON.parse(cleanedContent);
+    } catch (parseError) {
+      console.error("Error al parsear la respuesta de OpenAI:", parseError.message);
+      return res.status(500).json({
+        success: false,
+        message: "La respuesta de OpenAI no se pudo parsear correctamente.",
+        error: parseError.message,
+      });
+    }
+
+    // Validar estructura del JSON
+    if (!feedbackResult.feedback || !Array.isArray(feedbackResult.feedback)) {
+      return res.status(500).json({
+        success: false,
+        message: "Respuesta de OpenAI inválida: faltan claves esperadas 'feedback'.",
+        data: feedbackResult,
+      });
+    }
+
+    // 4. Devolver la retroalimentación generada
+    return res.status(200).json({
+      success: true,
+      data: feedbackResult,
+    });
+  } catch (error) {
+    // Manejo de errores
+    console.error("Error en generarRetroalimentacion:", {
+      message: error.message,
+      stack: error.stack,
+    });
+
+    if (error.response) {
+      return res.status(error.response.status).json({
+        success: false,
+        message: "Error en la API o OpenAI",
+        error: error.response.data?.message || error.message,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Error interno del servidor",
+      error: error.message,
+    });
+  }
+};
+
 const obtenerNombresLecciones = (data) => {
   return data.map(leccion => leccion.nombre);
 };
 
+const generarRetroalimentacionConImagenes = async (req, res) => {
+  try {
+    // 1. Obtener lista de lecciones desde la API
+    const response = await axios.get('http://18.191.150.96/api/leccion');
+    const listaLecciones = obtenerNombresLecciones(response.data);
+
+    if (!listaLecciones.length) {
+      return res.status(404).json({
+        success: false,
+        message: "No se encontraron lecciones",
+      });
+    }
+
+    // 2. Preparar las solicitudes a OpenAI para generar retroalimentación
+    const messages = [
+      {
+        role: "system",
+        content: "Eres un asistente que genera retroalimentación educativa con ejemplos prácticos. Proporciona una descripción para generar imágenes relacionadas con cada tema.",
+      },
+      {
+        role: "user",
+        content: `Genera retroalimentación para los siguientes temas: ${listaLecciones.join(", ")}. Incluye una descripción breve de cada tema para crear imágenes relacionadas. Formato esperado en JSON:
+      {
+        "feedback": [
+          {
+            "topic": "Nombre del tema",
+            "details": "Explicación o retroalimentación sobre el tema.",
+            "examples": ["Ejemplo práctico 1", "Ejemplo práctico 2"],
+            "image_description": "Descripción para generar una imagen del tema"
+          }
+        ]
+      }`,
+      },
+    ];
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages,
+      temperature: 0.7,
+      max_tokens: 2000,
+    });
+
+    let feedbackResult;
+    try {
+      const rawContent = completion.choices[0].message.content;
+      const cleanedContent = rawContent.replace(/```(?:json)?|```/g, "").trim();
+      feedbackResult = JSON.parse(cleanedContent);
+    } catch (parseError) {
+      console.error("Error al parsear la respuesta de OpenAI:", parseError.message);
+      return res.status(500).json({
+        success: false,
+        message: "La respuesta de OpenAI no se pudo parsear correctamente.",
+        error: parseError.message,
+      });
+    }
+
+    // Validar estructura del JSON
+    if (!feedbackResult.feedback || !Array.isArray(feedbackResult.feedback)) {
+      return res.status(500).json({
+        success: false,
+        message: "Respuesta de OpenAI inválida: faltan claves esperadas 'feedback'.",
+        data: feedbackResult,
+      });
+    }
+
+    // 3. Generar imágenes para cada tema usando DALL-E
+    for (const item of feedbackResult.feedback) {
+      if (item.image_description) {
+        const dalleResponse = await openai.images.generate({
+          model: "dall-e-3",
+          prompt: item.image_description,
+          n: 1,
+          size: "1024x1024",
+        });
+
+        if (dalleResponse && dalleResponse.data) {
+          // Guardar la URL de la imagen generada
+          item.image_url = dalleResponse.data[0].url;
+        } else {
+          item.image_url = null; // Si no se puede generar la imagen
+        }
+      }
+    }
+
+    // 4. Devolver retroalimentación con imágenes
+    return res.status(200).json({
+      success: true,
+      data: feedbackResult,
+    });
+  } catch (error) {
+    console.error("Error en generarRetroalimentacionConImagenes:", {
+      message: error.message,
+      stack: error.stack,
+    });
+
+    if (error.response) {
+      return res.status(error.response.status).json({
+        success: false,
+        message: "Error en la API o OpenAI",
+        error: error.response.data?.message || error.message,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Error interno del servidor",
+      error: error.message,
+    });
+  }
+};
+
+
+const generarRetroalimentacionConImagenes2 = async (req, res) => {
+  try {
+    // 1. Obtener el nombre de la lección desde la solicitud
+    const { leccion } = req.params; // O req.query.leccion, dependiendo de cómo configures la ruta
+
+    if (!leccion) {
+      return res.status(400).json({
+        success: false,
+        message: "No se proporcionó ninguna lección.",
+      });
+    }
+
+    // Opcional: Verificar si la lección existe en la base de datos
+    // const response = await axios.get(`http://127.0.0.1:8000/api/leccion/${leccion}`);
+    // if (!response.data) {
+    //   return res.status(404).json({
+    //     success: false,
+    //     message: `La lección "${leccion}" no se encontró.`,
+    //   });
+    // }
+
+    // 2. Preparar las solicitudes a OpenAI para generar retroalimentación
+    const messages = [
+      {
+        role: "system",
+        content:
+          "Eres un asistente que genera retroalimentación educativa para aprender invles con ejemplos prácticos. Proporciona una descripción para generar una imagen relacionada con el tema.",
+      },
+      {
+        role: "user",
+        content: `Genera retroalimentación para aprender ingles para el siguiente tema: "${leccion}". Incluye una descripción breve del tema para crear una imagen relacionada y ejemplos de ingles. Formato esperado en JSON:
+      {
+        "topic": "Nombre del tema",
+        "details": "Explicación o retroalimentación sobre el tema.",
+        "examples": ["Ejemplo práctico 1", "Ejemplo práctico 2"],
+        "image_description": "Una ilistracion que sea educativo para el tema"
+      }`,
+      },
+    ];
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages,
+      temperature: 0.7,
+      max_tokens: 1000,
+    });
+
+    let feedbackResult;
+    try {
+      const rawContent = completion.choices[0].message.content;
+      const cleanedContent = rawContent.replace(/```(?:json)?|```/g, "").trim();
+      feedbackResult = JSON.parse(cleanedContent);
+    } catch (parseError) {
+      console.error(
+        "Error al parsear la respuesta de OpenAI:",
+        parseError.message
+      );
+      return res.status(500).json({
+        success: false,
+        message: "La respuesta de OpenAI no se pudo parsear correctamente.",
+        error: parseError.message,
+      });
+    }
+
+    // Validar estructura del JSON
+    if (
+      !feedbackResult.topic ||
+      !feedbackResult.details ||
+      !feedbackResult.examples ||
+      !feedbackResult.image_description
+    ) {
+      return res.status(500).json({
+        success: false,
+        message:
+          "Respuesta de OpenAI inválida: faltan claves esperadas ('topic', 'details', 'examples', 'image_description').",
+        data: feedbackResult,
+      });
+    }
+
+    // 3. Generar imagen para el tema usando DALL-E
+    let imageUrl = null;
+    try {
+      const dalleResponse = await openai.images.generate({
+        model: "dall-e-3",
+        prompt: feedbackResult.image_description,
+        n: 1,
+        size: "1024x1024",
+      });
+
+      if (dalleResponse && dalleResponse.data) {
+        // Guardar la URL de la imagen generada
+        imageUrl = dalleResponse.data[0].url;
+      }
+    } catch (error) {
+      console.error(
+        `Error generando imagen para el tema "${feedbackResult.topic}":`,
+        error.message
+      );
+      imageUrl = null;
+    }
+
+    // Agregar la URL de la imagen al resultado
+    feedbackResult.image_url = imageUrl;
+
+    // 4. Devolver retroalimentación con imagen
+    return res.status(200).json({
+      success: true,
+      data: feedbackResult,
+    });
+  } catch (error) {
+    console.error("Error en generarRetroalimentacionConImagenes:", {
+      message: error.message,
+      stack: error.stack,
+    });
+
+    if (error.response) {
+      return res.status(error.response.status).json({
+        success: false,
+        message: "Error en la API o OpenAI",
+        error: error.response.data?.message || error.message,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Error interno del servidor",
+      error: error.message,
+    });
+  }
+};
+
 export const reportsController = {
   obtenerResultados,
-  entregarNivelDeIngles
+  entregarNivelDeIngles,
+  generarRetroalimentacion,
+  generarRetroalimentacionConImagenes,
+  generarRetroalimentacionConImagenes2
 };

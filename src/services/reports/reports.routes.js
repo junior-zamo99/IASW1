@@ -5,7 +5,8 @@ const routerReports = Router() ;
 
 
 routerReports.get('/crearExamen', reportsController.obtenerResultados);
-routerReports.get('/entregarNivelDeIngles', reportsController.entregarNivelDeIngles);
-
-
+routerReports.post('/entregarNivelDeIngles', reportsController.entregarNivelDeIngles);
+routerReports.get('/obtenerRetroalimentacion', reportsController.generarRetroalimentacion);
+routerReports.get('/obtenerRetroalimentacionConImagenes', reportsController.generarRetroalimentacionConImagenes);
+    routerReports.get('/retroalimentacion/:leccion',  reportsController.generarRetroalimentacionConImagenes2);
 export default routerReports ;
